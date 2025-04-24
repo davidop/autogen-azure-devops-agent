@@ -1,137 +1,93 @@
 import os
+import asyncio
 from dotenv import load_dotenv
-from azure.ai.inference import ChatCompletionsClient
-from azure.core.credentials import AzureKeyCredential
-from autogen import AssistantAgent, UserProxyAgent, GroupChat, GroupChatManager
+
+from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination
+from autogen_agentchat.ui import Console
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
-from azure.core.credentials import AzureKeyCredential
-import asyncio
- 
-from dotenv import load_dotenv
 from tools import (
-    list_files, 
-    read_file, 
-    write_file, 
-    create_pull_request, 
-    clone_repo, 
-    create_branch, 
-    commit_and_push, 
+    list_files,
+    read_file,
+    write_file,
+    create_pull_request,
+    clone_repo,
+    create_branch,
+    commit_and_push,
     verify_repo_access,
     search_code
 )
 
-# Load environment variables
+# 🌍 Cargar entorno
 load_dotenv()
 
+# 🔐 Cliente de Azure OpenAI
 az_model_client = AzureOpenAIChatCompletionClient(
-        azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY")
-    )
+    azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+    model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    api_key=os.getenv("AZURE_OPENAI_API_KEY")
+)
 
-AZDO_ORG = os.getenv("AZDO_ORG")
-AZDO_PROJECT = os.getenv("AZDO_PROJECT")
-AZDO_REPO = os.getenv("AZDO_REPO")
-AZDO_URL = os.getenv("AZDO_URL")
-
-
-# Add Azure DevOps configuration check
+# ✅ Verificar acceso al repositorio
 print("\nChecking Azure DevOps configuration:")
 print(f"Organization: {os.getenv('AZDO_ORG')}")
 print(f"Project: {os.getenv('AZDO_PROJECT')}")
 print(f"Repository: {os.getenv('AZDO_REPO')}")
 
-# Verificar acceso al repositorio antes de configurar las herramientas
 if not verify_repo_access():
     raise ValueError("No se pudo acceder al repositorio de Azure DevOps")
 
-# Herramientas del agente
+# 🛠 Herramientas (funciones reales)
 tools = [
-    {
-        "name": "list_files",
-        "func": list_files,
-        "description": "Lista los archivos en un directorio"
-    },
-    {
-        "name": "read_file",
-        "func": read_file,
-        "description": "Lee el contenido de un archivo"
-    },
-    {
-        "name": "write_file",
-        "func": write_file,
-        "description": "Escribe contenido en un archivo"
-    },
-    {
-        "name": "create_pull_request",
-        "func": create_pull_request,
-        "description": "Crea un pull request"
-    },
-    {
-        "name": "clone_repo",
-        "func": clone_repo,
-        "description": "Clona un repositorio"
-    },
-    {
-        "name": "create_branch",
-        "func": create_branch,
-        "description": "Crea una rama nueva"
-    },
-    {
-        "name": "commit_and_push",
-        "func": commit_and_push,
-        "description": "Realiza commit y push de los cambios"
-    }
+    list_files,
+    read_file,
+    write_file,
+    create_pull_request,
+    clone_repo,
+    create_branch,
+    commit_and_push,
+    search_code
 ]
 
-# Add to existing tools list
-tools.extend([
-    {
-        "name": "search_code",
-        "func": search_code,
-        "description": "Busca código en el repositorio de Azure DevOps"
-    }
-])
-
-# Agentes
+# 🤖 Agentes
 planner = AssistantAgent(
-    name="planner", 
-    client=az_model_client,
-    system_message="You are a project manager and software architect. Help plan the development of a new feature in a C# and Blazor application. "
+    name="planner",
+    model_client=az_model_client,
+    system_message="You are a technical project manager focused on analyzing and coordinating solutions for software bugs in C# and Blazor applications."
 )
 
 coder = AssistantAgent(
     name="coder",
-    system_message="""You are a C# and Blazor expert. Help investigate and fix bugs in the codebase.
-    First search for relevant files, then analyze them for potential issues.""",
-    client=az_model_client
+    model_client=az_model_client,
+    system_message="You are a C# and Blazor expert. Investigate and fix bugs in the codebase. Use tools as needed to search files and read content.",
+    tools=tools
 )
 
-user_proxy = UserProxyAgent(name="user", human_input_mode="NEVER")
-
-# Flujo de conversación
-groupchat = GroupChat(agents=[user_proxy, planner, coder], messages=[], max_round=10)
-
-# Update manager configuration to use Azure deployment
-manager = GroupChatManager(
-    groupchat=groupchat,
-    client=az_model_client
+# 💬 Equipo de trabajo
+team = RoundRobinGroupChat(
+    [planner, coder],
+    max_turns=10,
+    termination_condition=MaxMessageTermination(3)
 )
 
-# Bug como entrada
-user_proxy.initiate_chat(manager, message="""
-Bug #123: Cuando un usuario sin rol hace login, la app se queda en blanco.
-Sospechamos que ocurre en la navegación Blazor tras el refactor de roles.
-""")
-
+# 🚀 Conversación automatizada
 async def main():
-    question = input("Que historia quieres que te cuente hoy: ")
-    await Console(team.run_stream(task=question))
- 
- 
-# Run the asynchronous function
+    task = f"""
+Repositorio: {os.getenv('AZDO_REPO')}
+
+Necesito investigar el Bug #123: Cuando un usuario sin rol hace login, la app se queda en blanco.
+Sospechamos que el error ocurre en la navegación de Blazor, tras el refactor de roles.
+
+Por favor:
+- Busca archivos relacionados con autenticación o navegación.
+- Analiza su contenido en busca de fallos relacionados con usuarios sin rol.
+- Propón una causa raíz y una posible solución.
+"""
+    await Console(team.run_stream(task=task), output_stats=True)
+
 if __name__ == "__main__":
     asyncio.run(main())
