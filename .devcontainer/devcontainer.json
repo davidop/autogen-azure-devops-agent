@@ -1,0 +1,26 @@
+
+{
+  "name": "Autogen Azure DevOps Agent (DevContainer)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+  "postCreateCommand": "pip install -r requirements.txt",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+  "remoteEnv": {
+    "AZDO_PAT": "${env:AZDO_PAT}",
+    "AZDO_ORG": "${env:AZDO_ORG}",
+    "AZDO_PROJECT": "${env:AZDO_PROJECT}",
+    "AZDO_REPO": "${env:AZDO_REPO}"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder}/autogen_azure_devops_agent/repositorio,target=/workspaces/autogen_azure_devops_agent/autogen_azure_devops_agent/repositorio,type=bind"
+  ]
+}

@@ -1,0 +1,19 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# VSCode
+.vscode/
+.env
+
+# DevContainer
+.devcontainer/.env
+autogen_azure_devops_agent/repositorio/
+
+# OS
+.DS_Store
+Thumbs.db
