@@ -1,29 +1,37 @@
-import os
 import asyncio
+import os
 from dotenv import load_dotenv
-
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.teams import RoundRobinGroupChat
-from autogen_agentchat.conditions import MaxMessageTermination
-from autogen_agentchat.ui import Console
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
-from tools import (
-    list_files,
-    read_file,
-    write_file,
-    create_pull_request,
-    clone_repo,
-    create_branch,
-    commit_and_push,
-    verify_repo_access,
-    search_code
-)
+from autogen_agentchat.agents import UserProxyAgent
+from agents.plannerAgent import create_bug_planner_agent
+from agents.devopsAgent import create_devops_agent
+from agents.coderAgent import create_coder_agent
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
+from autogen_agentchat.ui import Console
 
-# 🌍 Cargar entorno
-load_dotenv()
+# Tools
+from tools.devopsTools import clone_repo, create_branch, commit_and_push
 
-# 🔐 Cliente de Azure OpenAI
+# Cargar variables de entorno - asegurarse de que esto funcione primero
+load_dotenv(override=True)  # Agregar override=True para forzar la recarga
+
+# Depuración: Imprimir las variables cargadas para verificar
+print("Variables de entorno cargadas:")
+print(f"AZDO_PAT: {'Configurado' if os.getenv('AZDO_PAT') else 'No configurado'}")
+print(f"AZDO_ORG: {os.getenv('AZDO_ORG')}")
+print(f"AZDO_PROJECT: {os.getenv('AZDO_PROJECT')}")
+print(f"AZDO_REPO: {os.getenv('AZDO_REPO')}")
+
+# Establecer las variables necesarias para las herramientas de DevOps
+# Forzamos la asignación con valores concretos para evitar problemas
+os.environ["AZDO_PAT"] = os.getenv("AZDO_PAT", "")
+os.environ["AZDO_ORG"] = os.getenv("AZDO_ORG", "")
+os.environ["AZDO_PROJECT"] = os.getenv("AZDO_PROJECT", "")
+os.environ["AZDO_REPO"] = os.getenv("AZDO_REPO", "")
+os.environ["REPO_PATH"] = "./repo_clonado"  # Directorio local donde se clonará el repo
+
 az_model_client = AzureOpenAIChatCompletionClient(
     azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
     model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
@@ -32,62 +40,40 @@ az_model_client = AzureOpenAIChatCompletionClient(
     api_key=os.getenv("AZURE_OPENAI_API_KEY")
 )
 
-# ✅ Verificar acceso al repositorio
-print("\nChecking Azure DevOps configuration:")
-print(f"Organization: {os.getenv('AZDO_ORG')}")
-print(f"Project: {os.getenv('AZDO_PROJECT')}")
-print(f"Repository: {os.getenv('AZDO_REPO')}")
+# Crear agentes
+planner = create_bug_planner_agent(az_model_client)
+devops = create_devops_agent(az_model_client)
+coder = create_coder_agent(az_model_client)  # Añadido el CoderAgent
 
-if not verify_repo_access():
-    raise ValueError("No se pudo acceder al repositorio de Azure DevOps")
-
-# 🛠 Herramientas (funciones reales)
-tools = [
-    list_files,
-    read_file,
-    write_file,
-    create_pull_request,
-    clone_repo,
-    create_branch,
-    commit_and_push,
-    search_code
-]
-
-# 🤖 Agentes
-planner = AssistantAgent(
-    name="planner",
-    model_client=az_model_client,
-    system_message="You are a technical project manager focused on analyzing and coordinating solutions for software bugs in C# and Blazor applications."
-)
-
-coder = AssistantAgent(
-    name="coder",
-    model_client=az_model_client,
-    system_message="You are a C# and Blazor expert. Investigate and fix bugs in the codebase. Use tools as needed to search files and read content.",
-    tools=tools
-)
-
-# 💬 Equipo de trabajo
-team = RoundRobinGroupChat(
-    [planner, coder],
-    max_turns=10,
-    termination_condition=MaxMessageTermination(3)
-)
-
-# 🚀 Conversación automatizada
+# Crear el flujo de conversación
 async def main():
-    task = f"""
-Repositorio: {os.getenv('AZDO_REPO')}
-
-Necesito investigar el Bug #123: Cuando un usuario sin rol hace login, la app se queda en blanco.
-Sospechamos que el error ocurre en la navegación de Blazor, tras el refactor de roles.
-
-Por favor:
-- Busca archivos relacionados con autenticación o navegación.
-- Analiza su contenido en busca de fallos relacionados con usuarios sin rol.
-- Propón una causa raíz y una posible solución.
+    # Crear el UserProxyAgent siguiendo el ejemplo que funciona
+    user_proxy = UserProxyAgent(name="user")
+    
+    # Definir condiciones de terminación
+    text_mention_termination = TextMentionTermination("TERMINATE")
+    max_messages_termination = MaxMessageTermination(max_messages=30)  # Aumentado para permitir más interacciones
+    termination = text_mention_termination | max_messages_termination
+    
+    # Crear el RoundRobinGroupChat con el formato del ejemplo que funciona
+    # Agregamos el CoderAgent a la secuencia de agentes
+    group_chat = RoundRobinGroupChat(
+        [user_proxy, planner, devops, coder],  # Orden: usuario → planner → devops → coder → usuario → ...
+        max_turns=15,  # Aumentado para permitir más interacciones
+        termination_condition=termination,
+    )
+    
+    # Usar Console para mostrar la conversación como en el ejemplo que funciona
+    await Console(
+        group_chat.run_stream(
+            task="""
+Tenemos un bug en el repositorio Next.Frontend.apps. 
+Cuando un usuario sin rol hace login, la app se queda en blanco.
+Sospechamos que es por la navegación. 
+Clona el repositorio, crea una rama y analiza el código para corregir el bug.
 """
-    await Console(team.run_stream(task=task), output_stats=True)
+        )
+    )  # Stream the messages to the console.
 
 if __name__ == "__main__":
     asyncio.run(main())
