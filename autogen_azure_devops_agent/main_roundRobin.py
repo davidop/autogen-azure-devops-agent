@@ -4,15 +4,14 @@ from dotenv import load_dotenv
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
 from autogen_agentchat.agents import UserProxyAgent
-from agents.plannerAgent import create_bug_planner_agent
-from agents.devopsAgent import create_devops_agent
-from agents.coderAgent import create_coder_agent
+from autogen_azure_devops_agent.agents.devopsAgent import create_devops_agent
+from autogen_azure_devops_agent.agents.coderAgent import create_coder_agent
 from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
 from autogen_agentchat.ui import Console
 
 # Tools
-from tools.devopsTools import clone_repo, create_branch, commit_and_push
+from autogen_azure_devops_agent.tools.devopsTools import clone_repo, create_branch, commit_and_push
 
 # Cargar variables de entorno - asegurarse de que esto funcione primero
 load_dotenv(override=True)  # Agregar override=True para forzar la recarga
@@ -41,9 +40,8 @@ az_model_client = AzureOpenAIChatCompletionClient(
 )
 
 # Crear agentes
-planner = create_bug_planner_agent(az_model_client)
 devops = create_devops_agent(az_model_client)
-coder = create_coder_agent(az_model_client)  # Añadido el CoderAgent
+coder = create_coder_agent(az_model_client)
 
 # Crear el flujo de conversación
 async def main():
@@ -56,9 +54,8 @@ async def main():
     termination = text_mention_termination | max_messages_termination
     
     # Crear el RoundRobinGroupChat con el formato del ejemplo que funciona
-    # Agregamos el CoderAgent a la secuencia de agentes
     group_chat = RoundRobinGroupChat(
-        [user_proxy, planner, devops, coder],  # Orden: usuario → planner → devops → coder → usuario → ...
+        [user_proxy, devops, coder],  # Orden: usuario → devops → coder → usuario → ...
         max_turns=15,  # Aumentado para permitir más interacciones
         termination_condition=termination,
     )
@@ -71,6 +68,11 @@ Tenemos un bug en el repositorio Next.Frontend.apps.
 Cuando un usuario sin rol hace login, la app se queda en blanco.
 Sospechamos que es por la navegación. 
 Clona el repositorio, crea una rama y analiza el código para corregir el bug.
+
+Flujo de trabajo:
+1. El agente DevOps clonará el repositorio y creará una rama para la corrección
+2. El agente Coder analizará el código, encontrará la causa del error y lo corregirá
+3. El agente DevOps realizará commit y push de los cambios
 """
         )
     )  # Stream the messages to the console.

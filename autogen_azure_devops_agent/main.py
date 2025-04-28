@@ -3,11 +3,14 @@ import os
 from dotenv import load_dotenv
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
-# Corregir importaciones para usar rutas relativas y actualizar nombre de función
-from autogen_azure_devops_agent.agents.plannerAgent import create_task_planner_agent
+# Importar todos los agentes especializados
 from autogen_azure_devops_agent.agents.devopsAgent import create_devops_agent
 from autogen_azure_devops_agent.agents.coderAgent import create_coder_agent
 from autogen_azure_devops_agent.agents.coordinatorAgent import create_coordinator_agent
+from autogen_azure_devops_agent.agents.architectAgent import create_architect_agent
+from autogen_azure_devops_agent.agents.qaAgent import create_qa_agent
+from autogen_azure_devops_agent.agents.securityAgent import create_security_agent
+from autogen_azure_devops_agent.agents.databaseAgent import create_database_agent
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
 from autogen_agentchat.ui import Console
@@ -52,43 +55,49 @@ az_model_client = AzureOpenAIChatCompletionClient(
     api_key=os.getenv("AZURE_OPENAI_API_KEY")
 )
 
-# Crear agentes especializados
-planner = create_task_planner_agent(az_model_client)
+# Crear todos los agentes especializados
 devops = create_devops_agent(az_model_client)
 coder = create_coder_agent(az_model_client)
 coordinator = create_coordinator_agent(az_model_client)
+architect = create_architect_agent(az_model_client)
+qa = create_qa_agent(az_model_client)
+security = create_security_agent(az_model_client)
+database = create_database_agent(az_model_client)
 
 # Crear el flujo de conversación
 async def main():
     
-    # Definir condiciones de terminación - Cambiado para pasar directamente el objeto sin envolverlo en una lista
+    # Definir condiciones de terminación
     termination_condition = TextMentionTermination("Pull Request completed!")
 
-    # Diseño de un selector que controla el flujo de trabajo
+    # Diseño de un selector que controla el flujo de trabajo con todos los agentes especializados
     selector_prompt = """
     Basado en la descripción de los agentes y el contexto actual, selecciona el agente más apropiado para manejar la tarea.
     
     AGENTES:
-    - DevTaskPlannerAgent: Analiza tareas de desarrollo y genera resúmenes estructurados para la planificación del trabajo.
-    - DevOpsAgent: Gestiona operaciones Git en Azure DevOps, incluyendo clonación de repositorios, creación de ramas, commits y pull requests.
+    - Coordinator: Supervisa el proceso y dirige el flujo de trabajo, analiza tareas y genera planes técnicos.
+    - ArchitectAgent: Especialista en diseño de arquitectura, patrones de diseño y principios SOLID.
     - CoderAgent: Implementa soluciones técnicas en el código base usando diversas herramientas.
-    - Coordinator: Supervisa el proceso y dirige el flujo de trabajo.
+    - QAAgent: Se enfoca en calidad, pruebas y validación del código desarrollado.
+    - SecurityAgent: Evalúa y mitiga riesgos de seguridad en el código y la arquitectura.
+    - DatabaseAgent: Especialista en modelado de datos, optimización de consultas y estructuras de persistencia.
+    - DevOpsAgent: Gestiona operaciones Git en Azure DevOps, incluyendo clonación, ramas, commits y pull requests.
     
     REGLAS DE SECUENCIA:
-    1. La conversación siempre empieza con el DevTaskPlannerAgent para analizar la tarea.
-    2. Después del plan, el DevOpsAgent debe clonar el repositorio y crear la rama.
-    3. Solo cuando el repositorio está listo, el CoderAgent puede implementar la solución.
-    4. El CoderAgent debe implementar COMPLETAMENTE todas las partes de la solución antes de finalizar:
-       - Crear la clase FancyDashboard
-       - Implementar el método en IDashboardRepository
-       - Implementar el método en DashboardRepository
-       - Implementar el endpoint en DashboardController
-       - Una vez completado, debe indicar "Task completed successfully!"
-    5. Solo después de que el CoderAgent indique "Task completed successfully!", el DevOpsAgent debe hacer commit y push.
-    6. Después del commit y push, el DevOpsAgent debe crear un pull request hacia la rama main.
-    7. El DevOpsAgent debe indicar "Pull Request completed!" cuando termine el proceso completo.
-    8. El Coordinator interviene cuando es necesario dirigir o corregir el flujo.
-    9. La conversación solo finaliza cuando el DevOpsAgent indica "Pull Request completed!"
+    1. La conversación siempre empieza con el Coordinator para analizar la tarea y crear un plan.
+    2. Para tareas que requieran decisiones arquitectónicas, involucra al ArchitectAgent después del plan inicial.
+    3. Si hay consideraciones de datos o persistencia, el DatabaseAgent debe evaluar el enfoque.
+    4. En caso de nuevas funcionalidades que puedan tener impacto en seguridad, consulta al SecurityAgent.
+    5. Para cambios en repositorios, el DevOpsAgent debe preparar el entorno de trabajo.
+    6. El CoderAgent implementa soluciones basadas en directrices del Architect y otros especialistas.
+    7. Cuando el CoderAgent indique que ha completado la implementación, el ArchitectAgent DEBE realizar una revisión formal del código para verificar que cumple con los patrones de diseño y principios arquitectónicos establecidos.
+    8. Después de la aprobación del ArchitectAgent, el QAAgent debe verificar que el código cumpla requisitos y buenas prácticas de calidad.
+    9. Si el ArchitectAgent o QAAgent encuentran problemas, el CoderAgent debe realizar las correcciones necesarias y volver a solicitar revisión.
+    10. El CoderAgent debe implementar COMPLETAMENTE todas las partes de la solución antes de finalizar e indicar "Task completed successfully!"
+    11. Solo después de la aprobación del ArchitectAgent y QAAgent, el DevOpsAgent hace commit y push.
+    12. Finalmente, el DevOpsAgent debe crear un pull request e indicar "Pull Request completed!"
+    13. El Coordinator interviene cuando es necesario dirigir o corregir el flujo.
+    14. La conversación solo finaliza cuando el DevOpsAgent indica "Pull Request completed!"
     
     ESTADO ACTUAL:
     {history}
@@ -104,7 +113,7 @@ async def main():
 
     # Crear el grupo de chat con selector inteligente
     group_chat = SelectorGroupChat(
-        participants=[coordinator, planner, devops, coder],
+        participants=[coordinator, architect, coder, qa, security, database, devops],
         model_client=az_model_client,
         termination_condition=termination_condition,
         selector_prompt=selector_prompt
@@ -125,18 +134,23 @@ Tenemos la siguiente tarea de desarrollo:
 
 {task}
 
-Seguiremos un flujo de trabajo estructurado donde:
-1. El planificador analizará la tarea y creará un plan técnico
-2. El equipo de DevOps clonará el repositorio y preparará el entorno
-3. El equipo de desarrollo implementará el endpoint solicitado, que debe incluir:
+Seguiremos un flujo de trabajo estructurado donde participarán varios especialistas:
+
+1. El Coordinator analizará la tarea y creará un plan técnico
+2. El Arquitecto evaluará y propondrá el diseño apropiado para el nuevo endpoint
+3. El especialista en Bases de Datos analizará el modelo de datos necesario
+4. El especialista en Seguridad evaluará consideraciones de seguridad relevantes
+5. El equipo de DevOps clonará el repositorio y preparará el entorno
+6. El equipo de desarrollo implementará el endpoint solicitado, incluyendo:
    - Crear la clase FancyDashboard
    - Añadir el método necesario a IDashboardRepository
    - Implementar el método en DashboardRepository
    - Añadir el endpoint GetFancyDashboard al DashboardController
-4. DevOps finalizará con commit, push de los cambios y creación de un pull request
-5. El proceso completo termina cuando el pull request esté creado con éxito
+7. El Arquitecto revisará el código para asegurar que sigue los patrones y principios arquitectónicos
+8. El equipo de QA verificará la calidad y cobertura de pruebas
+9. DevOps finalizará con commit, push de los cambios y creación de un pull request
 
-DevTaskPlannerAgent, por favor comienza analizando la tarea y generando un plan estructurado.
+Coordinator, por favor comienza analizando la tarea y generando un plan estructurado.
 """
     
     # Ejecutar el chat y mostrar resultados
