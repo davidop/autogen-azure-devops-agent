@@ -3,7 +3,7 @@ import subprocess
 import shutil
 
 # Las variables se obtendrán dinámicamente en cada función, no al importar el módulo
-def clone_repo(branch: str = "master") -> str:
+def clone_repo(branch: str = "main", git_user_name: str = None, git_user_email: str = None) -> str:
     """Clone the Azure DevOps repository into local path."""
     # Obtener las variables de entorno en el momento de la ejecución
     AZDO_PAT = os.getenv("AZDO_PAT")
@@ -43,33 +43,68 @@ def clone_repo(branch: str = "master") -> str:
         # Intentar clonar con la rama especificada
         try:
             subprocess.run(["git", "clone", "-b", branch, repo_url, REPO_PATH], check=True)
+            
+            # Configurar la identidad Git después de clonar si se proporcionaron valores
+            if git_user_name and git_user_email:
+                os.chdir(REPO_PATH)
+                subprocess.run(["git", "config", "user.name", git_user_name], check=True)
+                subprocess.run(["git", "config", "user.email", git_user_email], check=True)
+                os.chdir("..")
+                print(f"Configurada identidad Git local: {git_user_name} <{git_user_email}>")
+            
             return f"Repositorio clonado en '{REPO_PATH}' usando la rama '{branch}'."
         except subprocess.CalledProcessError:
-            # Si falló con la rama especificada, intentar clonar sin especificar rama
-            if branch == "master":
+            # Si falló con la rama especificada, intentar clonar con otra rama común o sin especificar rama
+            if branch == "main":
+                print("La rama 'main' no está disponible. Intentando con 'master'...")
                 try:
-                    print("La rama 'master' no está disponible. Intentando clonar sin especificar rama...")
-                    subprocess.run(["git", "clone", repo_url, REPO_PATH], check=True)
-                    # Determinar qué rama se clonó
-                    os.chdir(REPO_PATH)
-                    current_branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip()
-                    os.chdir("..")
-                    return f"Repositorio clonado en '{REPO_PATH}' usando la rama principal '{current_branch}'."
-                except subprocess.CalledProcessError as e:
-                    return f"Error al clonar el repositorio sin especificar rama: {str(e)}"
+                    subprocess.run(["git", "clone", "-b", "master", repo_url, REPO_PATH], check=True)
+                    
+                    # Configurar la identidad Git después de clonar si se proporcionaron valores
+                    if git_user_name and git_user_email:
+                        os.chdir(REPO_PATH)
+                        subprocess.run(["git", "config", "user.name", git_user_name], check=True)
+                        subprocess.run(["git", "config", "user.email", git_user_email], check=True)
+                        os.chdir("..")
+                        print(f"Configurada identidad Git local: {git_user_name} <{git_user_email}>")
+                        
+                    return f"Repositorio clonado en '{REPO_PATH}' usando la rama 'master'."
+                except subprocess.CalledProcessError:
+                    print("La rama 'master' tampoco está disponible. Intentando clonar sin especificar rama...")
+                    return _clone_default_branch(repo_url, REPO_PATH, git_user_name, git_user_email)
             else:
-                raise  # Re-lanzar la excepción si no era la rama "master"
+                print(f"La rama '{branch}' no está disponible. Intentando clonar sin especificar rama...")
+                return _clone_default_branch(repo_url, REPO_PATH, git_user_name, git_user_email)
     except subprocess.CalledProcessError as e:
         return f"Error al clonar el repositorio: {str(e)}"
 
-def create_branch(branch_name: str, base_branch: str = "master") -> str:
+def _clone_default_branch(repo_url: str, repo_path: str, git_user_name: str = None, git_user_email: str = None) -> str:
+    """Helper function to clone the default branch of a repository without specifying branch name."""
+    try:
+        subprocess.run(["git", "clone", repo_url, repo_path], check=True)
+        # Determinar qué rama se clonó
+        os.chdir(repo_path)
+        current_branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip()
+        
+        # Configurar la identidad Git después de clonar si se proporcionaron valores
+        if git_user_name and git_user_email:
+            subprocess.run(["git", "config", "user.name", git_user_name], check=True)
+            subprocess.run(["git", "config", "user.email", git_user_email], check=True)
+            print(f"Configurada identidad Git local: {git_user_name} <{git_user_email}>")
+        
+        os.chdir("..")
+        return f"Repositorio clonado en '{repo_path}' usando la rama principal '{current_branch}'."
+    except subprocess.CalledProcessError as e:
+        return f"Error al clonar el repositorio sin especificar rama: {str(e)}"
+
+def create_branch(branch_name: str, base_branch: str = "main") -> str:
     """
     Crea una nueva rama a partir de la rama base especificada y la publica en el remoto.
     Primero verifica si la rama ya existe localmente o en remoto.
     
     Args:
         branch_name (str): Nombre de la rama a crear
-        base_branch (str, optional): Rama base desde la que crear la nueva rama. Por defecto "master".
+        base_branch (str, optional): Rama base desde la que crear la nueva rama. Por defecto "main".
         
     Returns:
         str: Mensaje con el resultado de la operación
@@ -104,8 +139,34 @@ def create_branch(branch_name: str, base_branch: str = "master") -> str:
                 base_exists = True
                 break
         
+        # Si la rama base especificada no existe, intentar con "master" como alternativa
+        if not base_exists and base_branch == "main":
+            print(f"La rama base '{base_branch}' no existe. Comprobando si existe 'master' como alternativa...")
+            for branch in all_branches:
+                branch = branch.strip().replace("* ", "")
+                if branch == "master" or branch == "remotes/origin/master":
+                    base_exists = True
+                    base_branch = "master"
+                    print(f"Usando 'master' como rama base alternativa.")
+                    break
+                    
         if not base_exists:
-            return f"Error: La rama base '{base_branch}' no existe ni localmente ni en remoto."
+            # Intentar encontrar la rama predeterminada
+            try:
+                # Listar todas las ramas remotas y buscar HEAD
+                remote_head = subprocess.check_output(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], text=True).strip()
+                if remote_head:
+                    # Convertir algo como "refs/remotes/origin/HEAD -> refs/remotes/origin/main" a "main"
+                    default_branch = remote_head.split("refs/remotes/origin/")[-1]
+                    print(f"Usando la rama predeterminada del repositorio: {default_branch}")
+                    base_branch = default_branch
+                    base_exists = True
+            except subprocess.CalledProcessError:
+                # Si no se puede determinar la rama predeterminada
+                pass
+                
+        if not base_exists:
+            return f"Error: No se pudo encontrar una rama base válida. Ni '{base_branch}', ni 'master', ni la rama predeterminada existen."
         
         # Verificar si la rama ya existe localmente
         local_branches = subprocess.check_output(["git", "branch"], text=True).splitlines()
@@ -172,9 +233,18 @@ def create_branch(branch_name: str, base_branch: str = "master") -> str:
     finally:
         os.chdir(original_cwd)
 
-def commit_and_push(branch_name: str, commit_message: str) -> str:
+def commit_and_push(branch_name: str, commit_message: str, git_user_name: str = None, git_user_email: str = None) -> str:
     """
     Realiza commit y push de los cambios en la rama especificada.
+    
+    Args:
+        branch_name (str): Nombre de la rama donde se realizarán los commits
+        commit_message (str): Mensaje del commit
+        git_user_name (str, optional): Nombre del usuario de Git para firmar el commit
+        git_user_email (str, optional): Email del usuario de Git para firmar el commit
+        
+    Returns:
+        str: Mensaje con el resultado de la operación
     """
     # Obtener las variables de entorno en el momento de la ejecución
     REPO_PATH = os.getenv("REPO_PATH", "./repo_clonado")
@@ -187,6 +257,29 @@ def commit_and_push(branch_name: str, commit_message: str) -> str:
     try:
         # Asegurarse de estar en la rama correcta
         subprocess.run(["git", "checkout", branch_name], check=True)
+        
+        # Configurar la identidad Git si se proporcionaron valores
+        identity_configured = False
+        if git_user_name and git_user_email:
+            subprocess.run(["git", "config", "user.name", git_user_name], check=True)
+            subprocess.run(["git", "config", "user.email", git_user_email], check=True)
+            print(f"Configurada identidad Git para commit: {git_user_name} <{git_user_email}>")
+            identity_configured = True
+        else:
+            # Verificar si existe una configuración de usuario en el repositorio
+            try:
+                user_name = subprocess.check_output(["git", "config", "user.name"], text=True).strip()
+                user_email = subprocess.check_output(["git", "config", "user.email"], text=True).strip()
+                if user_name and user_email:
+                    print(f"Usando identidad Git existente: {user_name} <{user_email}>")
+                    identity_configured = True
+            except subprocess.CalledProcessError:
+                print("No se encontró configuración de identidad Git en el repositorio local")
+
+        # Advertir si no hay identidad configurada
+        if not identity_configured:
+            print("ADVERTENCIA: No se ha configurado una identidad Git específica. Se usará la configuración global si existe.")
+                
         # Añadir todos los cambios
         subprocess.run(["git", "add", "."], check=True)
         # Realizar el commit
