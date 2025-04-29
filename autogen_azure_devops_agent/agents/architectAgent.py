@@ -1,5 +1,6 @@
 from autogen_agentchat.agents import AssistantAgent
 
+# Usar importaciones absolutas en lugar de relativas
 from autogen_azure_devops_agent.tools.coderTools import (
     explore_repository, 
     find_files, 

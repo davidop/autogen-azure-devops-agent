@@ -1,11 +1,10 @@
 from autogen_agentchat.agents import AssistantAgent
-import os
 
+# Usar importaciones absolutas en lugar de relativas
 from autogen_azure_devops_agent.tools.devopsTools import (
-    clone_repo,
-    create_branch,
-    commit_and_push,
-    create_pull_request
+    clone_repo, 
+    create_branch, 
+    commit_and_push
 )
 
 def create_devops_agent(model_client):
@@ -43,5 +42,5 @@ CRITICAL TERMINATION INSTRUCTION: When you finish creating the pull request as t
 """,
         description="Expert en Azure DevOps que maneja operaciones de repositorio",
         model_client=model_client,
-        tools=[clone_repo, create_branch, commit_and_push, create_pull_request]
+        tools=[clone_repo, create_branch, commit_and_push]
     )

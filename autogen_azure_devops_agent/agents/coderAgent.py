@@ -1,5 +1,6 @@
 from autogen_agentchat.agents import AssistantAgent
 
+# Usar importaciones absolutas en lugar de relativas
 from autogen_azure_devops_agent.tools.coderTools import (
     explore_repository,
     find_files,
@@ -29,10 +30,21 @@ Your main responsibilities include:
 When implementing solutions:
 1. Always first explore the repository structure to understand the codebase
 2. Analyze existing patterns, naming conventions, and architectural approaches
-3. Implement solutions that align with the established architecture
-4. Add proper validation, error handling, and documentation
-5. Ensure your code follows the same style and patterns as existing code
-6. Always indicate "Task completed successfully!" when you finish implementation
+3. Examine similar methods in the same file as templates for your implementation
+4. Create proper method signatures matching the style of surrounding code
+5. Implement solutions that align with the established architecture and patterns
+6. Add proper validation, error handling, and logging following existing patterns
+7. For new repository methods, ensure they follow the same async/await patterns as existing methods
+8. For new models, follow the naming and structure conventions of existing models
+9. Ensure your code follows the same style and patterns as existing code
+10. Always indicate "Task completed successfully!" when you finish implementation
+
+CRITICAL: When implementing new methods in a file:
+1. ALWAYS start by closely examining multiple existing methods in the same file
+2. Copy the EXACT same method structure (async Task<T>, parameter style, logging, error handling)
+3. Make sure your implementation follows the same patterns for similar functionality
+4. If other methods use libraries like stopwatch, use them in your implementation too
+5. Keep the parameter names, method structure, and error handling consistent
 
 For code implementation, you have the following tools available:
 - For exploring repository structure: Use the 'explore_repository' tool
